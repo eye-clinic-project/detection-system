@@ -136,6 +136,13 @@ class Stage1Model:
     def version(self) -> str:
         return f"{MODEL_VERSION}{len(self.models) or len(self.seeds)}"
 
+    def _checkpoint_path(self, seed: int) -> Path | None:
+        """Accept the documented name and the name the Kaggle v5 run exports."""
+        for name in (f"b3_seed{seed}.pth", f"v5_efficientnet_b3_seed{seed}.pth"):
+            if (self.model_dir / name).exists():
+                return self.model_dir / name
+        return None
+
     def load(self) -> None:
         try:
             config_path = self.model_dir / "ensemble_config.json"
@@ -145,13 +152,14 @@ class Stage1Model:
             self.thresholds = {c: float(config["thresholds"][c]) for c in CLASSES}
             self.seeds = [int(s) for s in config.get("seeds", [42, 123, 2024])]
 
-            missing = [f"b3_seed{s}.pth" for s in self.seeds if not (self.model_dir / f"b3_seed{s}.pth").exists()]
+            paths = {s: self._checkpoint_path(s) for s in self.seeds}
+            missing = [f"b3_seed{s}.pth" for s, p in paths.items() if p is None]
             if missing:
                 raise FileNotFoundError(f"Missing checkpoint(s) in {self.model_dir}: {', '.join(missing)}")
 
             models = []
             for seed in self.seeds:
-                state = torch.load(self.model_dir / f"b3_seed{seed}.pth", map_location="cpu", weights_only=True)
+                state = torch.load(paths[seed], map_location="cpu", weights_only=True)
                 state = {k.removeprefix("module."): v for k, v in state.items() if k != "n_averaged"}
                 model = build_model()
                 model.load_state_dict(state)

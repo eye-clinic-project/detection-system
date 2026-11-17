@@ -10,10 +10,15 @@ If AI_SERVICE_API_KEY is set, every request must send the same value in "x-api-k
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import secrets
+import time
+import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -26,6 +31,10 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(
 API_KEY = os.getenv("AI_SERVICE_API_KEY") or None
 MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "10")) * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
+# Every Grad-CAM /predict returns is also written here as PNG + JSON. Empty = do not save.
+GRAD_CAM_DIR = os.getenv("GRAD_CAM_DIR", "").strip()
+
+logger = logging.getLogger("core.main")
 
 model = from_env()
 
@@ -75,8 +84,27 @@ async def predict(file: UploadFile = File(...), grad_cam: bool = Query(default=T
         raise HTTPException(status_code=413, detail=f"Image must not exceed {MAX_FILE_SIZE // (1024 * 1024)} MB")
 
     try:
-        return await run_in_threadpool(model.predict, data, grad_cam=grad_cam)
+        result = await run_in_threadpool(model.predict, data, grad_cam=grad_cam)
     except InvalidImageError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ModelNotLoadedError as exc:
         raise HTTPException(status_code=503, detail=f"Model is not loaded: {exc}") from exc
+
+    if GRAD_CAM_DIR and result.get("grad_cam_png_base64"):
+        await run_in_threadpool(save_grad_cam, result, file.filename)
+    return result
+
+
+def save_grad_cam(result: dict, filename: str | None) -> None:
+    """Write the overlay and the result (without the base64) to GRAD_CAM_DIR. Never fails the request."""
+    try:
+        out = Path(GRAD_CAM_DIR)
+        out.mkdir(parents=True, exist_ok=True)
+        stem = Path(filename or "upload").stem.replace(" ", "_")[:40]
+        name = f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}_{result.get('grad_cam_class', 'X')}_{uuid.uuid4().hex[:6]}"
+        (out / f"{name}.png").write_bytes(base64.b64decode(result["grad_cam_png_base64"]))
+        meta = {k: v for k, v in result.items() if k != "grad_cam_png_base64"}
+        (out / f"{name}.json").write_text(json.dumps(meta, indent=2))
+        logger.info("Saved Grad-CAM to %s", out / f"{name}.png")
+    except Exception as exc:
+        logger.error("Could not save Grad-CAM: %s", exc)

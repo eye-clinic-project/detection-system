@@ -14,9 +14,7 @@ cp .env.example .env        # set AI_SERVICE_API_KEY to the same value as server
 Put the trained weights from Kaggle (`/kaggle/working`) in `weights/`:
 
 ```
-weights/b3_seed42.pth
-weights/b3_seed123.pth
-weights/b3_seed2024.pth
+weights/b3_seed42.pth          # or v5_efficientnet_b3_seed42.pth (single model, seeds: [42])
 weights/ensemble_config.json   # already here (thresholds from the notebook run)
 ```
 
@@ -42,7 +40,7 @@ All endpoints except `/` require the `x-api-key` header when `AI_SERVICE_API_KEY
 
 ```json
 {
-  "model_version": "effnet-b3-stage1-ens3",
+  "model_version": "effnet-b3-stage1-ens1",
   "stage1": {
     "has_dr": true, "confidence": 0.83, "dr_probability": 0.83, "threshold": 0.575,
     "status": "DETECTED", "detected": ["D"], "shown": ["D"], "top": "D",
