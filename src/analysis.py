@@ -264,7 +264,11 @@ class Stage1Model:
 
 
 def from_env() -> Stage1Model:
-    model_dir = Path(os.getenv("MODEL_DIR", Path(__file__).parent / "weights")).resolve()
+    here = Path(__file__).resolve().parent
+    model_dir = Path(os.getenv("MODEL_DIR") or here / "weights")
+    if not model_dir.is_absolute():
+        model_dir = here.parent / model_dir
+    model_dir = model_dir.resolve()
     device = pick_device(os.getenv("DEVICE", "auto"))
     torch.set_grad_enabled(True)  # Grad-CAM needs autograd; inference uses no_grad explicitly
     return Stage1Model(model_dir=model_dir, device=device)

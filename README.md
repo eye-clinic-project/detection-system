@@ -1,6 +1,6 @@
 # RetinaCare AI service (stage 1)
 
-FastAPI service for the EfficientNet-B3 ensemble trained in `efficientnet-b3-ver-4.ipynb`.
+FastAPI service for the EfficientNet-B3 ensemble trained in `note/efficientnet-b3-ver-4.ipynb`.
 Preprocessing, TTA, ensembling and thresholds match the notebook. The NestJS server calls it when `AI_MODE="remote"`.
 
 ## Setup
@@ -11,17 +11,17 @@ python3 -m venv .venv
 cp .env.example .env        # set AI_SERVICE_API_KEY to the same value as server/.env.development
 ```
 
-Put the trained weights from Kaggle (`/kaggle/working`) in `weights/`:
+Put the trained weights from Kaggle (`/kaggle/working`) in `src/weights/`:
 
 ```
-weights/b3_seed42.pth          # or v5_efficientnet_b3_seed42.pth (single model, seeds: [42])
-weights/ensemble_config.json   # already here (thresholds from the notebook run)
+src/weights/b3_seed42.pth          # or v5_efficientnet_b3_seed42.pth (single model, seeds: [42])
+src/weights/ensemble_config.json   # already here (thresholds from the notebook run)
 ```
 
 ## Run
 
 ```bash
-.venv/bin/uvicorn main:app --port 8000 --env-file .env
+.venv/bin/uvicorn main:app --app-dir src --port 8000 --env-file .env
 ```
 
 Swagger UI: http://127.0.0.1:8000/docs

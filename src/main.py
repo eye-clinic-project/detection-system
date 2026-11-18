@@ -1,13 +1,3 @@
-"""FastAPI service for the RetinaCare stage-1 model.
-
-Endpoints (the contract NestJS's AiService expects):
-  GET  /health      -> 200 when the model is loaded, 503 otherwise
-  GET  /model-info  -> model metadata and thresholds
-  POST /predict     -> multipart field "file"; stage-1 result + Grad-CAM PNG (base64)
-
-If AI_SERVICE_API_KEY is set, every request must send the same value in "x-api-key".
-"""
-
 from __future__ import annotations
 
 import base64
@@ -33,6 +23,7 @@ MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE_MB", "10")) * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 # Every Grad-CAM /predict returns is also written here as PNG + JSON. Empty = do not save.
 GRAD_CAM_DIR = os.getenv("GRAD_CAM_DIR", "").strip()
+ROOT = Path(__file__).resolve().parent.parent
 
 logger = logging.getLogger("core.main")
 
@@ -99,6 +90,8 @@ def save_grad_cam(result: dict, filename: str | None) -> None:
     """Write the overlay and the result (without the base64) to GRAD_CAM_DIR. Never fails the request."""
     try:
         out = Path(GRAD_CAM_DIR)
+        if not out.is_absolute():
+            out = ROOT / out
         out.mkdir(parents=True, exist_ok=True)
         stem = Path(filename or "upload").stem.replace(" ", "_")[:40]
         name = f"{time.strftime('%Y%m%d-%H%M%S')}_{stem}_{result.get('grad_cam_class', 'X')}_{uuid.uuid4().hex[:6]}"
