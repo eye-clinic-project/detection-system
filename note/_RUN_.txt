@@ -3,4 +3,4 @@ python3 -m venv .venv
 cp .env.example .env
 
 .venv/bin/uvicorn main:app --app-dir src --port 8000 --env-file .env
-.venv/bin/python -m uvicorn main:app --app-dir src --port 8000 --env-file .env
+.venv/bin/python -m uvicorn main:app --app-dir src --port 8001 --env-file .env
