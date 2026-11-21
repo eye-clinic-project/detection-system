@@ -11,17 +11,22 @@ python3 -m venv .venv
 cp .env.example .env        # set AI_SERVICE_API_KEY to the same value as server/.env.development
 ```
 
-Put the trained weights from Kaggle (`/kaggle/working`) in `src/weights/`:
+Put the trained weights in `src/weights/`. `ensemble_config.json` picks the model:
 
-```
-src/weights/b3_seed42.pth          # or v5_efficientnet_b3_seed42.pth (single model, seeds: [42])
-src/weights/ensemble_config.json   # already here (thresholds from the notebook run)
+```json
+{
+  "arch": "efficientnet_b5",            // timm model name (default efficientnet_b3)
+  "img_size": 456,                       // input size (default 384)
+  "checkpoint": "b5v2_seed{seed}.pth",   // file name per seed (default b3_seed{seed}.pth)
+  "seeds": [42, 123, 2024],
+  "thresholds": { "N": 0.475, ... }
+}
 ```
 
 ## Run
 
 ```bash
-.venv/bin/uvicorn main:app --app-dir src --port 8000 --env-file .env
+.venv/bin/python -m uvicorn main:app --app-dir src --port 8000 --env-file .env
 ```
 
 Swagger UI: http://127.0.0.1:8000/docs
@@ -40,7 +45,7 @@ All endpoints except `/` require the `x-api-key` header when `AI_SERVICE_API_KEY
 
 ```json
 {
-  "model_version": "effnet-b3-stage1-ens1",
+  "model_version": "effnet-b5-stage1-ens3",
   "stage1": {
     "has_dr": true, "confidence": 0.83, "dr_probability": 0.83, "threshold": 0.575,
     "status": "DETECTED", "detected": ["D"], "shown": ["D"], "top": "D",

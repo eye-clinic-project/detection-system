@@ -1,4 +1,4 @@
-"""Stage-1 inference: EfficientNet-B3 ensemble from efficientnet-b3-ver-4.ipynb.
+"""Stage-1 inference: EfficientNet ensemble (architecture, input size and checkpoints come from ensemble_config.json).
 
 The preprocessing, TTA, ensembling and thresholds mirror the notebook exactly
 (cells 6, 7, 9, 10 and 11), so the service gives the same numbers as Kaggle.
@@ -43,7 +43,8 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 MIN_SIDE = 64  # smaller images cannot be a usable fundus photo
 
-MODEL_VERSION = "effnet-b3-stage1-ens"
+DEFAULT_ARCH = "efficientnet_b3"
+DEFAULT_CHECKPOINT = "b3_seed{seed}.pth"
 
 
 class InvalidImageError(ValueError):
@@ -76,10 +77,10 @@ def enhance(rgb: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
 
 
-def prepare_rgb(rgb: np.ndarray, crop: bool = True) -> np.ndarray:
+def prepare_rgb(rgb: np.ndarray, crop: bool = True, size: int = IMG_SIZE) -> np.ndarray:
     if crop:
         rgb = crop_black_borders(rgb)
-    return cv2.resize(rgb, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
+    return cv2.resize(rgb, (size, size), interpolation=cv2.INTER_AREA)
 
 
 def to_tensor(rgb_resized: np.ndarray) -> torch.Tensor:
@@ -112,8 +113,8 @@ def pick_device(name: str) -> torch.device:
     return torch.device(name)
 
 
-def build_model() -> torch.nn.Module:
-    return timm.create_model("efficientnet_b3", pretrained=False, num_classes=len(CLASSES), drop_rate=0.4, drop_path_rate=0.3)
+def build_model(arch: str) -> torch.nn.Module:
+    return timm.create_model(arch, pretrained=False, num_classes=len(CLASSES), drop_rate=0.4, drop_path_rate=0.3)
 
 
 @dataclass
@@ -123,6 +124,9 @@ class Stage1Model:
     models: list[torch.nn.Module] = field(default_factory=list)
     thresholds: dict[str, float] = field(default_factory=dict)
     seeds: list[int] = field(default_factory=list)
+    arch: str = DEFAULT_ARCH
+    img_size: int = IMG_SIZE
+    checkpoint: str = DEFAULT_CHECKPOINT
     error: str | None = None
     loaded_at: float | None = None
     _cam: GradCAM | None = None
@@ -134,11 +138,15 @@ class Stage1Model:
 
     @property
     def version(self) -> str:
-        return f"{MODEL_VERSION}{len(self.models) or len(self.seeds)}"
+        short = self.arch.removeprefix("efficientnet_")
+        return f"effnet-{short}-stage1-ens{len(self.models) or len(self.seeds)}"
 
     def _checkpoint_path(self, seed: int) -> Path | None:
-        """Accept the documented name and the name the Kaggle v5 run exports."""
-        for name in (f"b3_seed{seed}.pth", f"v5_efficientnet_b3_seed{seed}.pth"):
+        """The name from the config, plus the legacy name the Kaggle B3 v5 run exports."""
+        names = [self.checkpoint.format(seed=seed)]
+        if self.arch == "efficientnet_b3":
+            names.append(f"v5_efficientnet_b3_seed{seed}.pth")
+        for name in names:
             if (self.model_dir / name).exists():
                 return self.model_dir / name
         return None
@@ -151,9 +159,12 @@ class Stage1Model:
             config = json.loads(config_path.read_text())
             self.thresholds = {c: float(config["thresholds"][c]) for c in CLASSES}
             self.seeds = [int(s) for s in config.get("seeds", [42, 123, 2024])]
+            self.arch = config.get("arch", DEFAULT_ARCH)
+            self.img_size = int(config.get("img_size", IMG_SIZE))
+            self.checkpoint = config.get("checkpoint", DEFAULT_CHECKPOINT)
 
             paths = {s: self._checkpoint_path(s) for s in self.seeds}
-            missing = [f"b3_seed{s}.pth" for s, p in paths.items() if p is None]
+            missing = [self.checkpoint.format(seed=s) for s, p in paths.items() if p is None]
             if missing:
                 raise FileNotFoundError(f"Missing checkpoint(s) in {self.model_dir}: {', '.join(missing)}")
 
@@ -161,7 +172,7 @@ class Stage1Model:
             for seed in self.seeds:
                 state = torch.load(paths[seed], map_location="cpu", weights_only=True)
                 state = {k.removeprefix("module."): v for k, v in state.items() if k != "n_averaged"}
-                model = build_model()
+                model = build_model(self.arch)
                 model.load_state_dict(state)
                 models.append(model.to(self.device).eval())
 
@@ -169,7 +180,7 @@ class Stage1Model:
             self._cam = GradCAM(model=models[0], target_layers=[models[0].blocks[-1]])
             self.error = None
             self.loaded_at = time.time()
-            logger.info("Loaded %d models on %s", len(models), self.device)
+            logger.info("Loaded %d x %s @ %dpx on %s", len(models), self.arch, self.img_size, self.device)
         except Exception as exc:  # keep the API up so /health can explain what is wrong
             self.models = []
             self.error = str(exc)
@@ -198,7 +209,7 @@ class Stage1Model:
         if not self.loaded:
             raise ModelNotLoadedError(self.error or "Model is not loaded")
         started = time.perf_counter()
-        rgb = prepare_rgb(decode_image(data), crop=True)
+        rgb = prepare_rgb(decode_image(data), crop=True, size=self.img_size)
         x = to_tensor(rgb).to(self.device)
 
         with self._lock:  # Grad-CAM hooks are not thread-safe
@@ -251,10 +262,10 @@ class Stage1Model:
             "model_version": self.version,
             "loaded": self.loaded,
             "error": self.error,
-            "architecture": "efficientnet_b3 (timm), multi-label, 8 classes",
+            "architecture": f"{self.arch} (timm), multi-label, 8 classes",
             "ensemble_seeds": self.seeds,
-            "input_size": IMG_SIZE,
-            "preprocessing": "crop black borders, resize 384, CLAHE (LAB L-channel), ImageNet normalize",
+            "input_size": self.img_size,
+            "preprocessing": f"crop black borders, resize {self.img_size}, CLAHE (LAB L-channel), ImageNet normalize",
             "tta": ["original", "hflip", "vflip", "hvflip"],
             "classes": [{"code": c, "name": CLASS_NAMES[c], "threshold": self.thresholds.get(c)} for c in CLASSES],
             "stage2": None,
